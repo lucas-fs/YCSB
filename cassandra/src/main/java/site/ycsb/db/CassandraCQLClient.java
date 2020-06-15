@@ -117,6 +117,12 @@ public class CassandraCQLClient extends DB {
   public static final String USE_SSL_CONNECTION = "cassandra.useSSL";
   private static final String DEFAULT_USE_SSL_CONNECTION = "false";
 
+  public static final String PAUSEMS_PROPERTY = "pausems";
+  private static Integer pausems = 0;
+
+  public static final String PAUSENS_PROPERTY = "pausens";
+  private static Integer pausens = 0;
+  
   /**
    * Count the number of times initialized to teardown on the last
    * {@link #cleanup()}.
@@ -147,7 +153,9 @@ public class CassandraCQLClient extends DB {
       }
 
       try {
-
+        pausems = Integer.parseInt(getProperties().getProperty(PAUSEMS_PROPERTY, "0"));
+        pausens = Integer.parseInt(getProperties().getProperty(PAUSENS_PROPERTY, "0"));
+        
         debug =
             Boolean.parseBoolean(getProperties().getProperty("debug", "false"));
         trace = Boolean.valueOf(getProperties().getProperty(TRACING_PROPERTY, TRACING_PROPERTY_DEFAULT));
@@ -584,7 +592,11 @@ public class CassandraCQLClient extends DB {
       }
 
       session.execute(boundStmt);
-
+      
+      if (pausems > 0 || pausens > 0) {
+        Thread.sleep(pausems, pausens);        
+      }
+      
       return Status.OK;
     } catch (Exception e) {
       logger.error(MessageFormatter.format("Error inserting key: {}", key).getMessage(), e);
