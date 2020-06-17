@@ -32,6 +32,7 @@ import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
 import com.datastax.driver.core.querybuilder.Update;
+import com.datastax.driver.core.exceptions.WriteTimeoutException;
 import site.ycsb.ByteArrayByteIterator;
 import site.ycsb.ByteIterator;
 import site.ycsb.DB;
@@ -598,6 +599,10 @@ public class CassandraCQLClient extends DB {
       }
       
       return Status.OK;
+      
+    } catch (WriteTimeoutException wte) {
+      System.out.println("CASSANDRA WRITE TIMEOUT EXCEPTION > TRYING SLEEP");
+      logger.error(MessageFormatter.format("[timeout] inserting key: {}", key).getMessage(), wte);
     } catch (Exception e) {
       logger.error(MessageFormatter.format("Error inserting key: {}", key).getMessage(), e);
     }
