@@ -124,6 +124,9 @@ public class CassandraCQLClient extends DB {
   public static final String PAUSENS_PROPERTY = "pausens";
   private static Integer pausens = 0;
   
+  public static final String RECOVERY_TIME_PROPERTY = "rectime";
+  private static Integer rectime = 0;
+  
   /**
    * Count the number of times initialized to teardown on the last
    * {@link #cleanup()}.
@@ -156,6 +159,7 @@ public class CassandraCQLClient extends DB {
       try {
         pausems = Integer.parseInt(getProperties().getProperty(PAUSEMS_PROPERTY, "0"));
         pausens = Integer.parseInt(getProperties().getProperty(PAUSENS_PROPERTY, "0"));
+        rectime = Integer.parseInt(getProperties().getProperty(RECOVERY_TIME_PROPERTY, "0"));
         
         debug =
             Boolean.parseBoolean(getProperties().getProperty("debug", "false"));
@@ -546,67 +550,79 @@ public class CassandraCQLClient extends DB {
    */
   @Override
   public Status insert(String table, String key, Map<String, ByteIterator> values) {
-
-    try {
-      Set<String> fields = values.keySet();
-      PreparedStatement stmt = insertStmts.get(fields);
-
-      // Prepare statement on demand
-      if (stmt == null) {
-        Insert insertStmt = QueryBuilder.insertInto(table);
-
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        Set<String> fields = values.keySet();
+        PreparedStatement stmt = insertStmts.get(fields);
+        
+        // Prepare statement on demand
+        if (stmt == null) {
+          Insert insertStmt = QueryBuilder.insertInto(table);
+          
+          // Add key
+          insertStmt.value(YCSB_KEY, QueryBuilder.bindMarker());
+          
+          // Add fields
+          for (String field : fields) {
+            insertStmt.value(field, QueryBuilder.bindMarker());
+          }
+          
+          stmt = session.prepare(insertStmt);
+          stmt.setConsistencyLevel(writeConsistencyLevel);
+          if (trace) {
+            stmt.enableTracing();
+          }
+          
+          PreparedStatement prevStmt = insertStmts.putIfAbsent(new HashSet(fields), stmt);
+          if (prevStmt != null) {
+            stmt = prevStmt;
+          }
+        }
+        
+        if (logger.isDebugEnabled()) {
+          logger.debug(stmt.getQueryString());
+          logger.debug("key = {}", key);
+          for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+            logger.debug("{} = {}", entry.getKey(), entry.getValue());
+          }
+        }
+        
         // Add key
-        insertStmt.value(YCSB_KEY, QueryBuilder.bindMarker());
-
+        BoundStatement boundStmt = stmt.bind().setString(0, key);
+        
         // Add fields
-        for (String field : fields) {
-          insertStmt.value(field, QueryBuilder.bindMarker());
+        ColumnDefinitions vars = stmt.getVariables();
+        for (int i = 1; i < vars.size(); i++) {
+          boundStmt.setString(i, values.get(vars.getName(i)).toString());
         }
-
-        stmt = session.prepare(insertStmt);
-        stmt.setConsistencyLevel(writeConsistencyLevel);
-        if (trace) {
-          stmt.enableTracing();
+        
+        session.execute(boundStmt);
+        
+        if (pausems > 0 || pausens > 0) {
+          Thread.sleep(pausems, pausens);        
         }
-
-        PreparedStatement prevStmt = insertStmts.putIfAbsent(new HashSet(fields), stmt);
-        if (prevStmt != null) {
-          stmt = prevStmt;
+        
+        return Status.OK;
+        
+      } catch (WriteTimeoutException wte) {
+        System.out.println("[print] sleep " + rectime + " ms - attempt "+ attempt);
+        logger.info("[inf] Performing a recovery delay time: sleep " + rectime + " ms - attempt "+ attempt);
+        logger.debug("[debug] Performing a recovery delay time: sleep " + rectime + " ms - attempt "+ attempt);
+        
+        try {
+          Thread.sleep(rectime);
+        } catch (InterruptedException ie) {
+          logger.error("Error to perform the recovery delay time!", ie);
         }
-      }
-
-      if (logger.isDebugEnabled()) {
-        logger.debug(stmt.getQueryString());
-        logger.debug("key = {}", key);
-        for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-          logger.debug("{} = {}", entry.getKey(), entry.getValue());
-        }
-      }
-
-      // Add key
-      BoundStatement boundStmt = stmt.bind().setString(0, key);
-
-      // Add fields
-      ColumnDefinitions vars = stmt.getVariables();
-      for (int i = 1; i < vars.size(); i++) {
-        boundStmt.setString(i, values.get(vars.getName(i)).toString());
-      }
-
-      session.execute(boundStmt);
-      
-      if (pausems > 0 || pausens > 0) {
-        Thread.sleep(pausems, pausens);        
+        continue;
+        
+      } catch (Exception e) {
+        logger.error(MessageFormatter.format("Error inserting key: {}", key).getMessage(), e);
       }
       
-      return Status.OK;
-      
-    } catch (WriteTimeoutException wte) {
-      System.out.println("CASSANDRA WRITE TIMEOUT EXCEPTION > TRYING SLEEP");
-      logger.error(MessageFormatter.format("[timeout] inserting key: {}", key).getMessage(), wte);
-    } catch (Exception e) {
-      logger.error(MessageFormatter.format("Error inserting key: {}", key).getMessage(), e);
+      break;
     }
-
+    
     return Status.ERROR;
   }
 
