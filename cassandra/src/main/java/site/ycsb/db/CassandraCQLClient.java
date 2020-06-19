@@ -605,9 +605,7 @@ public class CassandraCQLClient extends DB {
         return Status.OK;
         
       } catch (WriteTimeoutException wte) {
-        System.out.println("[print] sleep " + rectime + " ms - attempt "+ attempt);
-        logger.info("[inf] Performing a recovery delay time: sleep " + rectime + " ms - attempt "+ attempt);
-        logger.debug("[debug] Performing a recovery delay time: sleep " + rectime + " ms - attempt "+ attempt);
+        logger.info("Performing a recovery delay time: sleep " + rectime + " ms   > attempt "+ (attempt+1));
         
         try {
           Thread.sleep(rectime);
